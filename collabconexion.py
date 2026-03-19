@@ -10,12 +10,12 @@ file = st.file_uploader("Sube tu Excel", type=["xlsx"])
 
 # ---------------- HELPERS ---------------- #
 
-def clean_text(val):
+def clean(val):
     if pd.isna(val):
         return ""
     return str(val).strip()
 
-def fix_account_number(val):
+def fix_account(val):
     try:
         if pd.isna(val):
             return ""
@@ -37,19 +37,17 @@ def validar_email(email):
 if file:
     df = pd.read_excel(file)
 
-    # Limpiar filas vacías
+    # limpiar filas vacías
     df = df.dropna(how="all")
-
-    # Normalizar columnas
     df.columns = df.columns.str.strip()
 
-    # Convertir a diccionario
+    # construir diccionario
     data = {}
 
     for _, row in df.iterrows():
-        seccion = clean_text(row["SECCION"])
-        campo = clean_text(row["CAMPO"])
-        valor = clean_text(row["VALOR"])
+        seccion = clean(row.get("SECCION"))
+        campo = clean(row.get("CAMPO"))
+        valor = clean(row.get("VALOR"))
 
         if not seccion or not campo:
             continue
@@ -64,17 +62,14 @@ if file:
     errores = []
 
     try:
-        ruc = data["DATOS_EMPRESA"]["Numero de documento"]
-        email = data["CONTACTO"]["Correo"]
-
-        if not validar_ruc(ruc):
+        if not validar_ruc(data["DATOS_EMPRESA"]["Numero de documento"]):
             errores.append("RUC inválido")
 
-        if not validar_email(email):
+        if not validar_email(data["CONTACTO"]["Correo"]):
             errores.append("Email inválido")
 
     except:
-        errores.append("Faltan datos clave (RUC o Email)")
+        errores.append("Faltan datos clave")
 
     if errores:
         st.error("Errores encontrados:")
@@ -82,7 +77,7 @@ if file:
             st.write(f"- {e}")
         st.stop()
 
-    # ---------------- DATOS ---------------- #
+    # ---------------- EXTRAER DATOS ---------------- #
 
     emp = data["DATOS_EMPRESA"]
     dir = data.get("DIRECCION", {})
@@ -93,74 +88,92 @@ if file:
     noti = data["NOTIFICACIONES"]
     cont = data["CONTRATO"]
 
-    cuenta_bancaria = fix_account_number(ban.get("Numero de cuenta"))
+    cuenta_bancaria = fix_account(ban.get("Numero de cuenta"))
+
+    # ---------------- CONSTRUIR BLOQUES ---------------- #
+
+    address_block = (
+        'ADDRESS = {"street": "' + dir.get("Direccion","") + '", '
+        '"country": "' + dir.get("Pais","PE") + '", '
+        '"zip": "' + dir.get("Codigo postal","") + '", '
+        '"city": "' + dir.get("Ciudad","") + '", '
+        '"state": "' + dir.get("Departamento","") + '", '
+        '"country": "' + dir.get("Pais","PE") + '"}'
+    )
+
+    lista_collect = (
+        "LISTA_COLLECT=[\n"
+        "  {'CURRENCY':'" + rec.get("Moneda") + "',"
+        "'ACCOUNT_NUMBER':'" + rec.get("Numero de cuenta") + "',"
+        "'SERVICE_FEE':{\"fees\": [{\"fee\": {"
+        "\"dr\": " + rec.get("Comision (%)") + ", "
+        "\"cur\": \"" + rec.get("Moneda") + "\", "
+        "\"max\": 0.00, \"min\": 0.00, "
+        "\"tax\": " + rec.get("Impuesto (%)") + ", "
+        "\"fixed\": " + rec.get("Comision fija") + ", "
+        "\"formula\": \"fixed + amount * dr / 100\""
+        "}, \"service\": \"payment\"}]}}\n"
+        "  }\n"
+        "]"
+    )
+
+    lista_balance = (
+        "LISTA_BALANCE=[\n"
+        "  {'PSP':'" + ban.get("Banco") + "', "
+        "'CURRENCY':'" + ban.get("Moneda") + "', "
+        "'ACCOUNT_NUMBER':'" + cuenta_bancaria + "', "
+        "'SERVICE_ID':'" + ban.get("Codigo de servicio") + "'}\n"
+        "]"
+    )
 
     # ---------------- CODIGO FINAL ---------------- #
 
-    codigo = f'''############## COMPANY
-LEGAL_NAME = "{emp.get("Razon social")}"
-COMPANY_NAME = "{emp.get("Nombre comercial")}"
-COMPANY_WEB = "{emp.get("Pagina web","")}"
-DOCUMENT_TYPE = "{emp.get("Tipo de documento")}"
-DOCUMENT_ID = "{emp.get("Numero de documento")}"
-PHONE = "+{emp.get("Telefono")}"
+    codigo = f"""############## COMPANY
+LEGAL_NAME = "{emp.get('Razon social')}"
+COMPANY_NAME = "{emp.get('Nombre comercial')}"
+COMPANY_WEB = "{emp.get('Pagina web','')}"
+DOCUMENT_TYPE = "{emp.get('Tipo de documento')}"
+DOCUMENT_ID = "{emp.get('Numero de documento')}"
+PHONE = "+{emp.get('Telefono')}"
 
 #ADDRESS = {{"street": "", "county": "", "zip": "", "city": "", "state": ""}}
-ADDRESS = {{"street": "{dir.get("Direccion","")}", "country": "{dir.get("Pais","PE")}", "zip": "{dir.get("Codigo postal","")}", "city": "{dir.get("Ciudad","")}", "state": "{dir.get("Departamento","")}", "country": "{dir.get("Pais","PE")}"}}
+{address_block}
 #ADDRESS = {{"street": "", "country": "MX", "zip": "", "city": "", "state": "", "country": "PE"}}
-COUNTRY='{emp.get("Pais")}'
+COUNTRY='{emp.get('Pais')}'
 #CODIGO_COMERCIO='' # KPSP-CNF
 #CODIGO_COMERCIO=DOCUMENT_ID # KPSP-CNF
 codigo_comercio=DOCUMENT_ID
 
 
-user_first_name = "{con.get("Nombre")}"
-user_last_name = "{con.get("Apellido")}"
+user_first_name = "{con.get('Nombre')}"
+user_last_name = "{con.get('Apellido')}"
 USER_NAME = f"{{user_first_name}} {{user_last_name}}".strip()
-USER_EMAIL = "{con.get("Correo")}"
+USER_EMAIL = "{con.get('Correo')}"
 
 PREFIX = None
-SUB_TYPE = "{cfg.get("Tipo de servicio")}"
+SUB_TYPE = "{cfg.get('Tipo de servicio')}"
 
-LISTA_COLLECT=[
-  {{'CURRENCY':'{rec.get("Moneda")}',
-    'ACCOUNT_NUMBER':'{rec.get("Numero de cuenta")}',
-    'SERVICE_FEE':{{"fees": [{{"fee": {{
-        "dr": {rec.get("Comision (%)")},
-        "cur": "{rec.get("Moneda")}",
-        "max": 0.00,
-        "min": 0.00,
-        "tax": {rec.get("Impuesto (%)")},
-        "fixed": {rec.get("Comision fija")},
-        "formula": "fixed + amount * dr / 100"
-    }}, "service": "payment"}}]}}
-  }},
-]
+{lista_collect}
 
-  LISTA_BALANCE=[
-    {{'PSP':"{ban.get("Banco")}",
-      'CURRENCY':'{ban.get("Moneda")}',
-      'ACCOUNT_NUMBER':'{cuenta_bancaria}',
-      'SERVICE_ID':'{ban.get("Codigo de servicio")}'}
-    }}
-    ]
+  {lista_balance}
 
-LISTA_6_PSP={str(cfg.get("Soporta codigos largos")).upper()=="SI"}
+
+LISTA_6_PSP={str(cfg.get('Soporta codigos largos')).upper() == 'SI'}
 
 ## MODIFICABLE EN EL SISTEMA
 NOTIFICATION_INVOICE_PAID = True
-NOTIFICATION_WEBHOOK = "{noti.get("Webhook")}"
+NOTIFICATION_WEBHOOK = "{noti.get('Webhook')}"
 NOTIFICATION_WEBHOOK_CONEXION_UNICA= True #### observado, debe ser cnx_unica_standard
 CANT_LISTA_DEUDAS= True # False, <5
 
-CHRONOLOGICAL_PAYMENT = {str(cfg.get("Pagos en orden cronologico")).upper()=="SI"} # DESHABLITADO
+CHRONOLOGICAL_PAYMENT = {str(cfg.get('Pagos en orden cronologico')).upper() == 'SI'} # DESHABLITADO
 
 LATE_FEE_FORMULA_PEN = None
 LATE_FEE_FORMULA_USD = None
 
-_CONTRATO_start_date='{cont.get("Fecha inicio")}'
-_CONTRATO_end_date='{cont.get("Fecha fin")}'
-'''
+_CONTRATO_start_date='{cont.get('Fecha inicio')}'
+_CONTRATO_end_date='{cont.get('Fecha fin')}'
+"""
 
     # ---------------- OUTPUT ---------------- #
 
