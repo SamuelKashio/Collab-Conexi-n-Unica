@@ -1,62 +1,68 @@
 import streamlit as st
 import pandas as pd
 import re
-from io import StringIO
 
 st.set_page_config(page_title="Conexión Única Generator", layout="wide")
 
 st.title("⚙️ Generador Conexión Única")
-st.write("Sube el Excel completado por onboarding")
 
-file = st.file_uploader("Subir archivo Excel", type=["xlsx"])
+file = st.file_uploader("Sube tu Excel", type=["xlsx"])
 
-# ---------------- VALIDACIONES ---------------- #
+# ---------------- HELPERS ---------------- #
 
-def validar_email(email):
-    return re.match(r"[^@]+@[^@]+\.[^@]+", str(email))
+def clean_text(val):
+    if pd.isna(val):
+        return ""
+    return str(val).strip()
+
+def fix_account_number(val):
+    try:
+        if pd.isna(val):
+            return ""
+        val = str(val)
+        if "E+" in val:
+            return str(int(float(val)))
+        return val
+    except:
+        return str(val)
 
 def validar_ruc(ruc):
     return str(ruc).isdigit() and len(str(ruc)) == 11
 
-# ---------------- PROCESAMIENTO ---------------- #
+def validar_email(email):
+    return re.match(r"[^@]+@[^@]+\.[^@]+", str(email))
+
+# ---------------- MAIN ---------------- #
 
 if file:
     df = pd.read_excel(file)
 
+    # Limpiar filas vacías
+    df = df.dropna(how="all")
+
     # Normalizar columnas
-    df.columns = df.columns.str.strip().str.upper()
-
-    # Validar columnas esperadas
-    required_cols = ["SECCION", "CAMPO", "VALOR", "OBLIGATORIO"]
-    if not all(col in df.columns for col in required_cols):
-        st.error("El archivo no tiene el formato correcto.")
-        st.stop()
-
-    # Validar obligatorios
-    errores = []
-    for _, row in df.iterrows():
-        if str(row["OBLIGATORIO"]).upper() == "SI" and pd.isna(row["VALOR"]):
-            errores.append(f"Falta valor en: {row['SECCION']} - {row['CAMPO']}")
+    df.columns = df.columns.str.strip()
 
     # Convertir a diccionario
     data = {}
+
     for _, row in df.iterrows():
-        seccion = row["SECCION"]
-        campo = row["CAMPO"]
-        valor = row["VALOR"]
+        seccion = clean_text(row["SECCION"])
+        campo = clean_text(row["CAMPO"])
+        valor = clean_text(row["VALOR"])
+
+        if not seccion or not campo:
+            continue
 
         if seccion not in data:
             data[seccion] = {}
 
-        # Permitir múltiples valores (listas)
-        if campo in data[seccion]:
-            if not isinstance(data[seccion][campo], list):
-                data[seccion][campo] = [data[seccion][campo]]
-            data[seccion][campo].append(valor)
-        else:
-            data[seccion][campo] = valor
+        data[seccion][campo] = valor
 
-    # Validaciones específicas
+    # ---------------- VALIDACIONES ---------------- #
+
+    errores = []
+
     try:
         ruc = data["DATOS_EMPRESA"]["Numero de documento"]
         email = data["CONTACTO"]["Correo"]
@@ -66,8 +72,9 @@ if file:
 
         if not validar_email(email):
             errores.append("Email inválido")
+
     except:
-        errores.append("Error leyendo RUC o Email")
+        errores.append("Faltan datos clave (RUC o Email)")
 
     if errores:
         st.error("Errores encontrados:")
@@ -75,89 +82,85 @@ if file:
             st.write(f"- {e}")
         st.stop()
 
-    # ---------------- GENERACIÓN DE CÓDIGO ---------------- #
+    # ---------------- DATOS ---------------- #
 
-    empresa = data["DATOS_EMPRESA"]
-    direccion = data["DIRECCION"]
-    contacto = data["CONTACTO"]
-    config = data["CONFIGURACION"]
-    notif = data["NOTIFICACIONES"]
-    contrato = data["CONTRATO"]
+    emp = data["DATOS_EMPRESA"]
+    dir = data.get("DIRECCION", {})
+    con = data["CONTACTO"]
+    cfg = data["CONFIGURACION"]
+    rec = data["CUENTAS_RECAUDACION"]
+    ban = data["CUENTAS_BANCARIAS"]
+    noti = data["NOTIFICACIONES"]
+    cont = data["CONTRATO"]
 
-    # LISTA COLLECT
-    collect = f"""
-LISTA_COLLECT=[
-  {{
-    'CURRENCY':'{data["CUENTAS_RECAUDACION"]["Moneda"]}',
-    'ACCOUNT_NUMBER':'{data["CUENTAS_RECAUDACION"]["Numero de cuenta"]}',
-    'SERVICE_FEE':{{"fees": [{{"fee": {{
-        "dr": {data["CUENTAS_RECAUDACION"]["Comision (%)"]},
-        "cur": "{data["CUENTAS_RECAUDACION"]["Moneda"]}",
-        "max": 0.00,
-        "min": 0.00,
-        "tax": {data["CUENTAS_RECAUDACION"]["Impuesto (%)"]},
-        "fixed": {data["CUENTAS_RECAUDACION"]["Comision fija"]},
-        "formula": "fixed + amount * dr / 100"
-    }}, "service": "payment"}}]}}
-  }}
-]
-"""
+    cuenta_bancaria = fix_account_number(ban.get("Numero de cuenta"))
 
-    # LISTA BALANCE
-    balance = f"""
-LISTA_BALANCE=[
-  {{
-    'PSP':"{data["CUENTAS_BANCARIAS"]["Banco"]}",
-    'CURRENCY':'{data["CUENTAS_BANCARIAS"]["Moneda"]}',
-    'ACCOUNT_NUMBER':'{data["CUENTAS_BANCARIAS"]["Numero de cuenta"]}',
-    'SERVICE_ID':'{data["CUENTAS_BANCARIAS"]["Codigo de servicio"]}'
-  }}
-]
-"""
+    # ---------------- CODIGO FINAL ---------------- #
 
-    codigo = f"""
-############## COMPANY
-LEGAL_NAME = "{empresa['Razon social']}"
-COMPANY_NAME = "{empresa['Nombre comercial']}"
-COMPANY_WEB = "{empresa.get('Pagina web','')}"
-DOCUMENT_TYPE = "{empresa['Tipo de documento']}"
-DOCUMENT_ID = "{empresa['Numero de documento']}"
-PHONE = "{empresa['Telefono']}"
+    codigo = f'''############## COMPANY
+LEGAL_NAME = "{emp.get("Razon social")}"
+COMPANY_NAME = "{emp.get("Nombre comercial")}"
+COMPANY_WEB = "{emp.get("Pagina web","")}"
+DOCUMENT_TYPE = "{emp.get("Tipo de documento")}"
+DOCUMENT_ID = "{emp.get("Numero de documento")}"
+PHONE = "+{emp.get("Telefono")}"
 
-ADDRESS = {{
-    "street": "{direccion.get('Direccion','')}",
-    "country": "{direccion.get('Pais','PE')}",
-    "zip": "{direccion.get('Codigo postal','')}",
-    "city": "{direccion.get('Ciudad','')}",
-    "state": "{direccion.get('Departamento','')}"
-}}
-
-COUNTRY='{empresa['Pais']}'
+#ADDRESS = {{"street": "", "county": "", "zip": "", "city": "", "state": ""}}
+ADDRESS = {{"street": "{dir.get("Direccion","")}", "country": "{dir.get("Pais","PE")}", "zip": "{dir.get("Codigo postal","")}", "city": "{dir.get("Ciudad","")}", "state": "{dir.get("Departamento","")}", "country": "{dir.get("Pais","PE")}"}}
+#ADDRESS = {{"street": "", "country": "MX", "zip": "", "city": "", "state": "", "country": "PE"}}
+COUNTRY='{emp.get("Pais")}'
+#CODIGO_COMERCIO='' # KPSP-CNF
+#CODIGO_COMERCIO=DOCUMENT_ID # KPSP-CNF
 codigo_comercio=DOCUMENT_ID
 
-user_first_name = "{contacto['Nombre']}"
-user_last_name = "{contacto['Apellido']}"
+
+user_first_name = "{con.get("Nombre")}"
+user_last_name = "{con.get("Apellido")}"
 USER_NAME = f"{{user_first_name}} {{user_last_name}}".strip()
-USER_EMAIL = "{contacto['Correo']}"
+USER_EMAIL = "{con.get("Correo")}"
 
 PREFIX = None
-SUB_TYPE = "{config['Tipo de servicio']}"
+SUB_TYPE = "{cfg.get("Tipo de servicio")}"
 
-{collect}
+LISTA_COLLECT=[
+  {{'CURRENCY':'{rec.get("Moneda")}',
+    'ACCOUNT_NUMBER':'{rec.get("Numero de cuenta")}',
+    'SERVICE_FEE':{{"fees": [{{"fee": {{
+        "dr": {rec.get("Comision (%)")},
+        "cur": "{rec.get("Moneda")}",
+        "max": 0.00,
+        "min": 0.00,
+        "tax": {rec.get("Impuesto (%)")},
+        "fixed": {rec.get("Comision fija")},
+        "formula": "fixed + amount * dr / 100"
+    }}, "service": "payment"}}]}}
+  }},
+]
 
-{balance}
+  LISTA_BALANCE=[
+    {{'PSP':"{ban.get("Banco")}",
+      'CURRENCY':'{ban.get("Moneda")}',
+      'ACCOUNT_NUMBER':'{cuenta_bancaria}',
+      'SERVICE_ID':'{ban.get("Codigo de servicio")}'}
+    }}
+    ]
 
-LISTA_6_PSP={str(config['Soporta codigos largos']).upper() == 'SI'}
+LISTA_6_PSP={str(cfg.get("Soporta codigos largos")).upper()=="SI"}
 
+## MODIFICABLE EN EL SISTEMA
 NOTIFICATION_INVOICE_PAID = True
-NOTIFICATION_WEBHOOK = "{notif['Webhook']}"
-NOTIFICATION_WEBHOOK_CONEXION_UNICA= True
+NOTIFICATION_WEBHOOK = "{noti.get("Webhook")}"
+NOTIFICATION_WEBHOOK_CONEXION_UNICA= True #### observado, debe ser cnx_unica_standard
+CANT_LISTA_DEUDAS= True # False, <5
 
-CHRONOLOGICAL_PAYMENT = {str(config['Pagos en orden cronologico']).upper() == 'SI'}
+CHRONOLOGICAL_PAYMENT = {str(cfg.get("Pagos en orden cronologico")).upper()=="SI"} # DESHABLITADO
 
-_CONTRATO_start_date='{contrato['Fecha inicio']}'
-_CONTRATO_end_date='{contrato['Fecha fin']}'
-"""
+LATE_FEE_FORMULA_PEN = None
+LATE_FEE_FORMULA_USD = None
+
+_CONTRATO_start_date='{cont.get("Fecha inicio")}'
+_CONTRATO_end_date='{cont.get("Fecha fin")}'
+'''
 
     # ---------------- OUTPUT ---------------- #
 
@@ -166,8 +169,7 @@ _CONTRATO_end_date='{contrato['Fecha fin']}'
     st.code(codigo, language="python")
 
     st.download_button(
-        label="Descargar .py",
-        data=codigo,
-        file_name="conexion_unica.py",
-        mime="text/plain"
+        "Descargar .py",
+        codigo,
+        "conexion_unica.py"
     )
