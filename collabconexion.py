@@ -1,188 +1,142 @@
 import streamlit as st
-import pandas as pd
+import datetime
 import re
 
 # ==========================================
-# 1. CONFIGURACIÓN DE LA PÁGINA
+# CONFIGURACIÓN Y ESTILOS
 # ==========================================
-st.set_page_config(
-    page_title="Generador de Código Comercial",
-    page_icon="⚙️",
-    layout="wide"
-)
+st.set_page_config(page_title="Onboarding Form - Generador", page_icon="📝")
+
+st.markdown("""
+    <style>
+    .main { background-color: #f8f9fa; }
+    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #FF4B4B; color: white; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("🚀 Formulario de Onboarding Comercial")
+st.info("Completa los datos a continuación para generar el archivo de configuración técnica y el resumen para el cliente.")
 
 # ==========================================
-# 2. FUNCIONES DE LIMPIEZA Y TRANSFORMACIÓN
+# FORMULARIO DE ENTRADA
 # ==========================================
-def clean_value(val):
-    """
-    Limpia el valor extraído del Excel.
-    Maneja notación científica, flotantes terminados en .0 y espacios.
-    """
-    if pd.isna(val) or val == "" or str(val).strip().lower() == "nan":
-        return ""
-    
-    val_str = str(val).strip()
-    
-    # Manejar números leídos como flotantes o notación científica (ej. 1.93995e+12 o 20608153790.0)
-    if re.match(r'^-?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?$', val_str):
-        try:
-            val_float = float(val_str)
-            if val_float.is_integer():
-                return str(int(val_float))
-            return str(val_float)
-        except ValueError:
-            pass
-            
-    return val_str
+with st.form("onboarding_form"):
+    # --- SECCIÓN 1: EMPRESA ---
+    st.subheader("🏢 Datos de la Empresa")
+    col1, col2 = st.columns(2)
+    with col1:
+        legal_name = st.text_input("Razón Social", placeholder="CREDIMINUTO PERU S.A.C.")
+        company_name = st.text_input("Nombre Comercial", placeholder="CREDISMART")
+        document_id = st.text_input("RUC (11 dígitos)", max_chars=11)
+    with col2:
+        company_web = st.text_input("Página Web (Opcional)", placeholder="https://...")
+        phone = st.text_input("Teléfono de Contacto", placeholder="+51939358348")
+        country_code = st.selectbox("País", ["PER", "MEX", "COL"], index=0)
 
-def extract_data_to_dict(df):
-    """Convierte el DataFrame a un diccionario anidado dict[SECCION][CAMPO] = VALOR"""
-    data = {}
-    for _, row in df.iterrows():
-        seccion = str(row.get('SECCION', '')).strip().upper()
-        campo = str(row.get('CAMPO', '')).strip()
-        valor = clean_value(row.get('VALOR', ''))
-        
-        # Ignorar filas donde no hay sección ni campo (filas vacías arrastradas)
-        if not seccion or not campo:
-            continue
-            
-        if seccion not in data:
-            data[seccion] = {}
-        data[seccion][campo] = valor
-    return data
+    # --- SECCIÓN 2: DIRECCIÓN ---
+    st.subheader("📍 Dirección Fiscal")
+    street = st.text_input("Dirección (Calle/Av/Mz)", placeholder="Av. Ejemplo 123")
+    col_dir1, col_dir2, col_dir3 = st.columns(3)
+    with col_dir1:
+        city = st.text_input("Ciudad", value="Lima")
+    with col_dir2:
+        state = st.text_input("Departamento/Estado", value="Lima")
+    with col_dir3:
+        zip_code = st.text_input("Código Postal", value="15001")
+
+    # --- SECCIÓN 3: CONTACTO ---
+    st.subheader("👤 Contacto de Onboarding")
+    col_c1, col_c2 = st.columns(2)
+    with col_c1:
+        u_first_name = st.text_input("Nombres", placeholder="Edith")
+        u_email = st.text_input("Correo Electrónico", placeholder="usuario@empresa.com")
+    with col_c2:
+        u_last_name = st.text_input("Apellidos", placeholder="Díaz")
+
+    # --- SECCIÓN 4: CUENTAS Y BANCOS ---
+    st.subheader("💰 Configuración Bancaria")
+    col_b1, col_b2 = st.columns(2)
+    with col_b1:
+        st.markdown("**Cuenta de Recaudación (Collect)**")
+        curr_collect = st.selectbox("Moneda Recaudación", ["PEN", "USD"])
+        acc_collect = st.text_input("Número de Cuenta Recaudación", placeholder="xxx")
+    with col_b2:
+        st.markdown("**Cuenta de Abono (Balance)**")
+        psp = st.text_input("Banco (PSP)", value="BCP")
+        acc_bank = st.text_input("Número de Cuenta Bancaria", placeholder="1939945440088")
+        service_id = st.text_input("Service ID (Código de Servicio)", placeholder="1055")
+
+    # --- SECCIÓN 5: CONFIGURACIÓN Y CONTRATO ---
+    st.subheader("📅 Detalles del Servicio")
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        webhook = st.text_input("URL Webhook", value="https://cmin.io/api/kashio-interconnect-payment-notification")
+        prefix = st.text_input("Prefijo de Pago (Opcional)", value="")
+    with col_s2:
+        start_date = st.date_input("Inicio de Contrato", datetime.date.today())
+        end_date = st.date_input("Fin de Contrato", datetime.date.today() + datetime.timedelta(days=365))
+
+    submitted = st.form_submit_button("GENERAR ARCHIVOS")
 
 # ==========================================
-# 3. FUNCIONES DE VALIDACIÓN
+# LÓGICA DE GENERACIÓN
 # ==========================================
-def validate_dataframe(df):
-    """Valida reglas de negocio: obligatorios, formato RUC, formato email."""
+if submitted:
+    # 1. Validaciones
     errors = []
-    
-    required_cols = ['SECCION', 'CAMPO', 'VALOR', 'OBLIGATORIO']
-    missing_cols = [col for col in required_cols if col not in df.columns]
-    if missing_cols:
-        errors.append(f"Faltan columnas requeridas: {', '.join(missing_cols)}")
-        return errors 
+    if not document_id.isdigit() or len(document_id) != 11:
+        errors.append("El RUC debe ser numérico y tener 11 dígitos.")
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", u_email):
+        errors.append("El formato del correo electrónico no es válido.")
+    if not legal_name or not company_name:
+        errors.append("La Razón Social y el Nombre Comercial son obligatorios.")
 
-    for index, row in df.iterrows():
-        seccion = str(row.get('SECCION', '')).strip()
-        campo = str(row.get('CAMPO', '')).strip()
+    if errors:
+        for err in errors:
+            st.error(err)
+    else:
+        # --- GENERACIÓN DE CÓDIGO .PY (Exactamente como se pidió) ---
+        prefix_val = f'"{prefix}"' if prefix else "None"
         
-        if not seccion and not campo:
-            continue # Saltar filas totalmente vacías
-            
-        obligatorio = str(row.get('OBLIGATORIO', '')).strip().upper()
-        valor = clean_value(row.get('VALOR', ''))
-        
-        # Validar obligatorios
-        if obligatorio == 'SI' and not valor:
-            errors.append(f"Fila {index + 2}: El campo '{campo}' en '{seccion}' es OBLIGATORIO.")
-            continue 
-            
-        # Validar RUC (Numero de documento)
-        if campo == 'Numero de documento' and valor:
-            if not valor.isdigit() or len(valor) != 11:
-                errors.append(f"Fila {index + 2}: El RUC '{valor}' es inválido. Debe tener 11 dígitos numéricos.")
-                
-        # Validar Correo
-        if campo == 'Correo' and valor:
-            if not re.match(r"[^@]+@[^@]+\.[^@]+", valor):
-                errors.append(f"Fila {index + 2}: El correo '{valor}' tiene un formato inválido.")
-                
-    return errors
-
-# ==========================================
-# 4. GENERACIÓN DE CÓDIGO (TEMPLATE SEGURO)
-# ==========================================
-def generate_py_script(data):
-    """Genera el código .py inyectando los valores de forma segura mediante replace()"""
-    
-    # Función auxiliar para no romper si el campo no existe
-    def get_val(seccion, campo, default=""):
-        return data.get(seccion.upper(), {}).get(campo, default)
-
-    # DATOS_EMPRESA
-    legal_name = get_val('DATOS_EMPRESA', 'Razon social')
-    company_name = get_val('DATOS_EMPRESA', 'Nombre comercial')
-    company_web = get_val('DATOS_EMPRESA', 'Pagina web')
-    document_type = get_val('DATOS_EMPRESA', 'Tipo de documento', 'RUC')
-    document_id = get_val('DATOS_EMPRESA', 'Numero de documento')
-    phone = get_val('DATOS_EMPRESA', 'Telefono')
-    if phone and not phone.startswith('+'): 
-        phone = "+" + phone # Asegurar el + para el teléfono
-
-    # DIRECCION
-    addr_street = get_val('DIRECCION', 'Direccion')
-    addr_zip = get_val('DIRECCION', 'Codigo postal')
-    addr_city = get_val('DIRECCION', 'Ciudad')
-    addr_state = get_val('DIRECCION', 'Departamento')
-    addr_country = get_val('DIRECCION', 'Pais', 'PE')
-
-    # CONTACTO
-    first_name = get_val('CONTACTO', 'Nombre')
-    last_name = get_val('CONTACTO', 'Apellido')
-    email = get_val('CONTACTO', 'Correo')
-
-    # CONFIGURACION
-    service_type = get_val('CONFIGURACION', 'Tipo de servicio', 'PAYMENT_COLLECTOR')
-    prefix = get_val('CONFIGURACION', 'Prefijo')
-    prefix_code = f'"{prefix}"' if prefix else "None"
-
-    # CUENTAS
-    collect_currency = get_val('CUENTAS_RECAUDACION', 'Moneda', 'PEN')
-    collect_account = get_val('CUENTAS_RECAUDACION', 'Numero de cuenta', 'xxx')
-    
-    bank_psp = get_val('CUENTAS_BANCARIAS', 'Banco', 'BCP')
-    bank_currency = get_val('CUENTAS_BANCARIAS', 'Moneda', 'PEN')
-    bank_account = get_val('CUENTAS_BANCARIAS', 'Numero de cuenta', 'xxx')
-    bank_service_id = get_val('CUENTAS_BANCARIAS', 'Codigo de servicio', 'x')
-
-    # NOTIFICACIONES
-    webhook = get_val('NOTIFICACIONES', 'Webhook')
-
-    # CONTRATO
-    start_date = get_val('CONTRATO', 'Fecha inicio')
-    end_date = get_val('CONTRATO', 'Fecha fin')
-
-    # PLANTILLA BASE CON PLACEHOLDERS
-    template = """############## COMPANY
-LEGAL_NAME = "[LEGAL_NAME]"
-COMPANY_NAME = "[COMPANY_NAME]"
-COMPANY_WEB = "[COMPANY_WEB]"
-DOCUMENT_TYPE = "[DOCUMENT_TYPE]"
-DOCUMENT_ID = "[DOCUMENT_ID]"
-PHONE = "[PHONE]"
-#ADDRESS = {"street": "", "county": "", "zip": "", "city": "", "state": ""}
-ADDRESS = {"street": "[ADDR_STREET]", "country": "[ADDR_COUNTRY]", "zip": "[ADDR_ZIP]", "city": "[ADDR_CITY]", "state": "[ADDR_STATE]"}
-COUNTRY='PER'
+        # Usamos f-strings escapando las llaves con {{ }}
+        py_code = f"""############## COMPANY
+LEGAL_NAME = "{legal_name.upper()}"
+COMPANY_NAME = "{company_name.upper()}"
+COMPANY_WEB = "{company_web}"
+DOCUMENT_TYPE = "RUC"
+DOCUMENT_ID = "{document_id}"
+PHONE = "{phone}"
+#ADDRESS = {{"street": "", "county": "", "zip": "", "city": "", "state": ""}}
+ADDRESS = {{"street": "{street}", "country": "PE", "zip": "{zip_code}", "city": "{city}", "state": "{state}", "country": "PE"}}
+#ADDRESS = {{"street": "", "country": "MX", "zip": "", "city": "", "state": "", "country": "PE"}}
+COUNTRY='{country_code}'
 #CODIGO_COMERCIO='' # KPSP-CNF
 #CODIGO_COMERCIO=DOCUMENT_ID # KPSP-CNF
 codigo_comercio=DOCUMENT_ID
 
 
-user_first_name = "[FIRST_NAME]"
-user_last_name = "[LAST_NAME]"
-USER_NAME = f"{user_first_name} {user_last_name}".strip()
-USER_EMAIL = "[EMAIL]"
+user_first_name = "{u_first_name}"
+user_last_name = "{u_last_name}"
+USER_NAME = f"{{user_first_name}} {{user_last_name}}".strip()
+USER_EMAIL = "{u_email}"
 
-PREFIX = [PREFIX]
-SUB_TYPE = "[SERVICE_TYPE]"
+PREFIX = {prefix_val}
+SUB_TYPE = "PAYMENT_COLLECTOR"
 
 LISTA_COLLECT=[
-  {'CURRENCY':'[COLLECT_CURRENCY]','ACCOUNT_NUMBER':'[COLLECT_ACCOUNT]','SERVICE_FEE':{"fees": [{"fee": {"dr": 0, "cur": "[COLLECT_CURRENCY]", "max": 0.00, "min": 0.00, "tax": 18, "fixed": 0.00, "formula": "fixed + amount * dr / 100"}, "service": "payment"}]} },
+  {{'CURRENCY':'{curr_collect}','ACCOUNT_NUMBER':'{acc_collect}','SERVICE_FEE':{{"fees": [{{"fee": {{"dr": 0, "cur": "{curr_collect}", "max": 0.00, "min": 0.00, "tax": 18, "fixed": 0.00, "formula": "fixed + amount * dr / 100"}}, "service": "payment"}}]}} }},
 ]
 
   LISTA_BALANCE=[
-    {'PSP':"[BANK_PSP]",'CURRENCY':'[BANK_CURRENCY]','ACCOUNT_NUMBER':'[BANK_ACCOUNT]','SERVICE_ID':'[BANK_SERVICE_ID]'},
+    {{'PSP':"{psp}",'CURRENCY':'{curr_collect}','ACCOUNT_NUMBER':'{acc_bank}','SERVICE_ID':'{service_id}'}},
     ]
+
 
 LISTA_6_PSP=True #soporta alfanumerico y consulta codifo de pago con un digito a mas
 
 ## MODIFICABLE EN EL SISTEMA
 NOTIFICATION_INVOICE_PAID = True
-NOTIFICATION_WEBHOOK = "[WEBHOOK]"
+NOTIFICATION_WEBHOOK = "{webhook}"
 NOTIFICATION_WEBHOOK_CONEXION_UNICA= True #### observado, debe ser cnx_unica_standard
 CANT_LISTA_DEUDAS= True # False, <5
 
@@ -191,97 +145,67 @@ CHRONOLOGICAL_PAYMENT = True # DESHABLITADO
 LATE_FEE_FORMULA_PEN = None
 LATE_FEE_FORMULA_USD = None
 
-_CONTRATO_start_date='[START_DATE]'
-_CONTRATO_end_date='[END_DATE]'
+_CONTRATO_start_date='{start_date.isoformat()}T23:40:41.012522Z'
+_CONTRATO_end_date='{end_date.isoformat()}T23:40:41.012574Z'
 """
 
-    # REEMPLAZOS
-    replacements = {
-        "[LEGAL_NAME]": legal_name,
-        "[COMPANY_NAME]": company_name,
-        "[COMPANY_WEB]": company_web,
-        "[DOCUMENT_TYPE]": document_type,
-        "[DOCUMENT_ID]": document_id,
-        "[PHONE]": phone,
-        "[ADDR_STREET]": addr_street,
-        "[ADDR_COUNTRY]": addr_country,
-        "[ADDR_ZIP]": addr_zip,
-        "[ADDR_CITY]": addr_city,
-        "[ADDR_STATE]": addr_state,
-        "[FIRST_NAME]": first_name,
-        "[LAST_NAME]": last_name,
-        "[EMAIL]": email,
-        "[PREFIX]": prefix_code,
-        "[SERVICE_TYPE]": service_type,
-        "[COLLECT_CURRENCY]": collect_currency,
-        "[COLLECT_ACCOUNT]": collect_account,
-        "[BANK_PSP]": bank_psp,
-        "[BANK_CURRENCY]": bank_currency,
-        "[BANK_ACCOUNT]": bank_account,
-        "[BANK_SERVICE_ID]": bank_service_id,
-        "[WEBHOOK]": webhook,
-        "[START_DATE]": start_date,
-        "[END_DATE]": end_date,
-    }
+        # --- GENERACIÓN DE RESUMEN PARA USUARIO (TXT) ---
+        user_summary = f"""RESUMEN DE CONFIGURACIÓN DE COMERCIO
+==========================================
+FECHA DE REGISTRO: {datetime.date.today()}
 
-    for key, val in replacements.items():
-        template = template.replace(key, str(val))
+1. DATOS DE LA EMPRESA
+----------------------
+Razón Social: {legal_name}
+Nombre Comercial: {company_name}
+RUC: {document_id}
+País: {country_code}
 
-    return template
+2. CONTACTO DESIGNADO
+----------------------
+Nombre: {u_first_name} {u_last_name}
+Email: {u_email}
 
-# ==========================================
-# 5. UI Y LÓGICA PRINCIPAL
-# ==========================================
-def main():
-    st.title("🚀 Generador de Comercios - Python")
-    st.markdown("Sube el archivo de configuración para generar automáticamente el código.")
+3. INFORMACIÓN BANCARIA
+----------------------
+Recaudación ({curr_collect}): Cuenta {acc_collect}
+Banco de Abono: {psp}
+Número de Cuenta: {acc_bank}
+ID de Servicio: {service_id}
 
-    uploaded_file = st.file_uploader("Sube el Excel o CSV de configuración", type=["xlsx", "csv"])
+4. CONFIGURACIÓN TÉCNICA
+----------------------
+Webhook: {webhook}
+Vigencia: {start_date} hasta {end_date}
 
-    if uploaded_file is not None:
-        try:
-            # Leer dependiendo del tipo de archivo
-            if uploaded_file.name.endswith('.csv'):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
-            
-            # Limpieza básica para pandas
-            df = df.dropna(how='all')
-            df = df.fillna('')
-            
-            with st.expander("🔍 Vista previa de los datos", expanded=False):
-                st.dataframe(df)
+==========================================
+Archivo generado automáticamente para Onboarding.
+"""
 
-            errors = validate_dataframe(df)
-            
-            if errors:
-                st.error("⚠️ Se encontraron errores en los datos. Por favor corrige el archivo:")
-                for error in errors:
-                    st.warning(f"- {error}")
-            else:
-                st.success("✅ ¡Datos validados correctamente!")
-                
-                data_dict = extract_data_to_dict(df)
-                python_code = generate_py_script(data_dict)
-                
-                st.subheader("📝 Código Generado")
-                st.code(python_code, language="python")
-                
-                b_code = python_code.encode('utf-8')
-                ruc = data_dict.get('DATOS_EMPRESA', {}).get('Numero de documento', 'comercio')
-                filename = f"{ruc}_config.py"
-                
-                st.download_button(
-                    label="⬇️ Descargar archivo .py",
-                    data=b_code,
-                    file_name=filename,
-                    mime="text/x-python"
-                )
+        st.success("✅ ¡Configuración generada con éxito!")
 
-        except Exception as e:
-            st.error(f"❌ Ocurrió un error inesperado al procesar el archivo: {e}")
-            st.info("Asegúrate de que las columnas se llamen exactamente: SECCION, CAMPO, VALOR, OBLIGATORIO, DESCRIPCION.")
+        # Visualización y Descargas
+        st.subheader("📦 Descargar Archivos")
+        col_dl1, col_dl2 = st.columns(2)
+        
+        with col_dl1:
+            st.download_button(
+                label="🐍 Descargar .py (Técnico)",
+                data=py_code,
+                file_name=f"config_{document_id}.py",
+                mime="text/x-python"
+            )
+        
+        with col_dl2:
+            st.download_button(
+                label="📄 Descargar Resumen (.txt)",
+                data=user_summary,
+                file_name=f"resumen_{company_name.replace(' ', '_')}.txt",
+                mime="text/plain"
+            )
 
-if __name__ == "__main__":
-    main()
+        with st.expander("👁️ Ver código generado"):
+            st.code(py_code, language="python")
+
+        with st.expander("👁️ Ver resumen para usuario"):
+            st.text(user_summary)
